@@ -15,7 +15,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure
         run: cmake --preset windows-ci-x64
@@ -39,7 +39,7 @@ jobs:
           Copy-Item data/locale/* package/data/obs-plugins/obs-discordstatus/locale/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: obs-discordstatus-${{ env.PLUGIN_VERSION }}-windows-x64
           path: package/*
