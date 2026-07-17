@@ -54,8 +54,42 @@ function(_setup_obs_studio)
 
   if(OS_WINDOWS)
     set(_cmake_generator "${CMAKE_GENERATOR}")
-    set(_cmake_arch "-A ${arch},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
-    set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION} -DCMAKE_ENABLE_SCRIPTING=OFF")
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+      set(_cmake_arch "-A ${arch},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+      set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION} -DCMAKE_ENABLE_SCRIPTING=OFF")
+    else()
+      # Single-config generators (Ninja): no -A support, pick a build type.
+      # obs-studio's compilerconfig checks CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION,
+      # which only VS generators set — inject the SDK version from the
+      # environment (vcvarsall) so the check passes.
+      set(_sdk_version "$ENV{WindowsSDKVersion}")
+      string(REPLACE "\\" "" _sdk_version "${_sdk_version}")
+      if(NOT _sdk_version)
+        set(_sdk_version "${CMAKE_SYSTEM_VERSION}")
+      endif()
+      set(_cmake_arch -DCMAKE_BUILD_TYPE=RelWithDebInfo)
+      set(_cmake_extra
+          -DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION}
+          -DCMAKE_ENABLE_SCRIPTING=OFF
+          -DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION=${_sdk_version}
+          -DCMAKE_VS_PLATFORM_NAME=x64
+      )
+      # obs-studio's architecture.cmake nests a 32-bit configure using the
+      # VS-generator -A flag (only needed for the win-capture hook helpers,
+      # which a plugin SDK build doesn't use). Skip it for non-VS generators.
+      set(_arch_file "${dependencies_dir}/${_obs_destination}/cmake/windows/architecture.cmake")
+      if(EXISTS "${_arch_file}")
+        file(READ "${_arch_file}" _arch_content)
+        string(
+          REPLACE
+          [[elseif(OBS_PARENT_ARCHITECTURE STREQUAL x64)]]
+          [[elseif(OBS_PARENT_ARCHITECTURE STREQUAL x64 AND CMAKE_GENERATOR MATCHES "Visual Studio")]]
+          _arch_content
+          "${_arch_content}"
+        )
+        file(WRITE "${_arch_file}" "${_arch_content}")
+      endif()
+    endif()
   elseif(OS_MACOS)
     set(_cmake_generator "Xcode")
     set(_cmake_arch "-DCMAKE_OSX_ARCHITECTURES:STRING='arm64;x86_64'")
@@ -66,7 +100,7 @@ function(_setup_obs_studio)
   execute_process(
     COMMAND
       "${CMAKE_COMMAND}" -S "${dependencies_dir}/${_obs_destination}" -B
-      "${dependencies_dir}/${_obs_destination}/build_${arch}" -G ${_cmake_generator} "${_cmake_arch}"
+      "${dependencies_dir}/${_obs_destination}/build_${arch}" -G ${_cmake_generator} ${_cmake_arch}
       -DOBS_CMAKE_VERSION:STRING=3.0.0 -DENABLE_PLUGINS:BOOL=OFF -DENABLE_FRONTEND:BOOL=OFF
       -DOBS_VERSION_OVERRIDE:STRING=${_obs_version} "-DCMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'" ${_is_fresh}
       ${_cmake_extra}
@@ -76,43 +110,38 @@ function(_setup_obs_studio)
   )
   message(STATUS "Configure ${label} (${arch}) - done")
 
-  message(STATUS "Build ${label} (Debug - ${arch})")
-  execute_process(
-    COMMAND "${CMAKE_COMMAND}" --build build_${arch} --target obs-frontend-api --config Debug --parallel
-    WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
-    RESULT_VARIABLE _process_result
-    COMMAND_ERROR_IS_FATAL ANY
-    OUTPUT_QUIET
-  )
-  message(STATUS "Build ${label} (Debug - ${arch}) - done")
+  # Multi-config generators build/install Debug + Release; single-config
+  # generators (Ninja) only have the one configuration they were set up with.
+  if(OS_WINDOWS AND NOT CMAKE_GENERATOR MATCHES "Visual Studio")
+    set(_deps_configs RelWithDebInfo)
+  else()
+    set(_deps_configs Debug Release)
+  endif()
 
-  message(STATUS "Build ${label} (Release - ${arch})")
-  execute_process(
-    COMMAND "${CMAKE_COMMAND}" --build build_${arch} --target obs-frontend-api --config Release --parallel
-    WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
-    RESULT_VARIABLE _process_result
-    COMMAND_ERROR_IS_FATAL ANY
-    OUTPUT_QUIET
-  )
-  message(STATUS "Build ${label} (Reelase - ${arch}) - done")
+  foreach(_config IN LISTS _deps_configs)
+    message(STATUS "Build ${label} (${_config} - ${arch})")
+    execute_process(
+      COMMAND "${CMAKE_COMMAND}" --build build_${arch} --target obs-frontend-api --config ${_config} --parallel
+      WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
+      RESULT_VARIABLE _process_result
+      COMMAND_ERROR_IS_FATAL ANY
+      OUTPUT_QUIET
+    )
+    message(STATUS "Build ${label} (${_config} - ${arch}) - done")
+  endforeach()
 
   message(STATUS "Install ${label} (${arch})")
-  execute_process(
-    COMMAND
-      "${CMAKE_COMMAND}" --install build_${arch} --component Development --config Debug --prefix "${dependencies_dir}"
-    WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
-    RESULT_VARIABLE _process_result
-    COMMAND_ERROR_IS_FATAL ANY
-    OUTPUT_QUIET
-  )
-  execute_process(
-    COMMAND
-      "${CMAKE_COMMAND}" --install build_${arch} --component Development --config Release --prefix "${dependencies_dir}"
-    WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
-    RESULT_VARIABLE _process_result
-    COMMAND_ERROR_IS_FATAL ANY
-    OUTPUT_QUIET
-  )
+  foreach(_config IN LISTS _deps_configs)
+    execute_process(
+      COMMAND
+        "${CMAKE_COMMAND}" --install build_${arch} --component Development --config ${_config} --prefix
+        "${dependencies_dir}"
+      WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
+      RESULT_VARIABLE _process_result
+      COMMAND_ERROR_IS_FATAL ANY
+      OUTPUT_QUIET
+    )
+  endforeach()
   message(STATUS "Install ${label} (${arch}) - done")
 endfunction()
 

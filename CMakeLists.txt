@@ -34,6 +34,29 @@ if(ENABLE_QT)
   )
 endif()
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.c)
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/plugin-main.cpp
+    src/config.cpp
+    src/config.h
+    src/voice-state.cpp
+    src/voice-state.h
+    src/discord/rpc-client.cpp
+    src/discord/rpc-client.h
+    src/rules/rule.cpp
+    src/rules/rule.h
+    src/rules/actions.cpp
+    src/rules/actions.h
+    src/rules/engine.cpp
+    src/rules/engine.h
+    src/ui/settings-dialog.cpp
+    src/ui/settings-dialog.h
+)
+
+if(OS_WINDOWS)
+  # WinHTTP provides the WebSocket + HTTPS transport for the Discord RPC client
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp)
+endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
