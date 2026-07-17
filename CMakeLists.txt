@@ -44,6 +44,8 @@ target_sources(
     src/voice-state.h
     src/discord/rpc-client.cpp
     src/discord/rpc-client.h
+    src/discord/transport.cpp
+    src/discord/transport.h
     src/rules/rule.cpp
     src/rules/rule.h
     src/rules/actions.cpp

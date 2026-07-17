@@ -253,6 +253,43 @@ SettingsDialog::SettingsDialog(DiscordRpcClient *client, RulesEngine *engine, Pl
 	connect(client, &DiscordRpcClient::statusChanged, this,
 		[this](const QString &status) { m_statusLabel->setText(status); });
 
+	// Auth mode: StreamKit (zero setup) or the user's own Discord app.
+	auto *authForm = new QFormLayout;
+	auto *authMode = new QComboBox;
+	authMode->addItem("StreamKit (no setup required)");
+	authMode->addItem("Own Discord application");
+	auto *clientId = new QLineEdit(m_config->clientId);
+	auto *clientSecret = new QLineEdit(m_config->clientSecret);
+	clientSecret->setEchoMode(QLineEdit::Password);
+	auto *applyAuth = new QPushButton("Apply && Reconnect");
+	authForm->addRow("Discord auth:", authMode);
+	authForm->addRow("Client ID:", clientId);
+	authForm->addRow("Client secret:", clientSecret);
+	authForm->addRow("", applyAuth);
+	layout->addLayout(authForm);
+
+	bool ownApp = m_config->authMode == QStringLiteral("ownapp");
+	authMode->setCurrentIndex(ownApp ? 1 : 0);
+	clientId->setEnabled(ownApp);
+	clientSecret->setEnabled(ownApp);
+	connect(authMode, &QComboBox::currentIndexChanged, this, [clientId, clientSecret](int index) {
+		clientId->setEnabled(index == 1);
+		clientSecret->setEnabled(index == 1);
+	});
+	connect(applyAuth, &QPushButton::clicked, this, [this, authMode, clientId, clientSecret] {
+		bool own = authMode->currentIndex() == 1;
+		m_config->authMode = own ? QStringLiteral("ownapp") : QStringLiteral("streamkit");
+		m_config->clientId = clientId->text().trimmed();
+		m_config->clientSecret = clientSecret->text().trimmed();
+		// Token from the old mode/app is not valid for the new one.
+		m_config->accessToken.clear();
+		m_config->save();
+		m_client->setAccessToken(QString());
+		m_client->setAuthMode(own ? DiscordAuthMode::OwnApp : DiscordAuthMode::StreamKit,
+				      m_config->clientId, m_config->clientSecret);
+		m_client->restart();
+	});
+
 	layout->addWidget(new QLabel("Rules:"));
 	m_ruleList = new QListWidget;
 	layout->addWidget(m_ruleList);

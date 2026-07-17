@@ -1,59 +1,52 @@
-# OBS Plugin Template
+# Discord Status for OBS
 
-## Introduction
+An OBS Studio plugin that watches your **local Discord client** over its RPC
+interface and reacts to voice status changes with configurable OBS actions.
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+## Triggers
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+- Joined / left a voice channel
+- Muted / unmuted yourself, deafened / undeafened yourself
+- Someone joined / left your voice channel (optionally a specific user)
+- A user started / stopped speaking (optionally a specific user)
+- Anyone started speaking / everyone stopped speaking
 
-## Supported Build Environments
+## Actions (each trigger can run any number of them)
 
-| Platform  | Tool   |
-|-----------|--------|
-| Windows   | Visual Studio 17 2022 |
-| macOS     | XCode 16.0 |
-| Windows, macOS  | CMake 3.30.5 |
-| Ubuntu 24.04 | CMake 3.28.3 |
-| Ubuntu 24.04 | `ninja-build` |
-| Ubuntu 24.04 | `pkg-config`
-| Ubuntu 24.04 | `build-essential` |
+- Show / hide a source (in one scene or in all scenes)
+- Mute / unmute an audio source
+- Set the volume of an audio source
 
-## Quick Start
+Configure rules under **Tools → Discord Status Settings** in OBS.
 
-An absolute bare-bones [Quick Start Guide](https://github.com/obsproject/obs-plugintemplate/wiki/Quick-Start-Guide) is available in the wiki.
+## Installation (Windows)
 
-## Documentation
+Extract the release zip into your OBS installation directory
+(`C:\Program Files\obs-studio`), or copy
+`bin\64bit` + `data` into `%ProgramData%\obs-studio\plugins\obs-discordstatus\`.
 
-All documentation can be found in the [Plugin Template Wiki](https://github.com/obsproject/obs-plugintemplate/wiki).
+## Discord authorization
 
-Suggested reading to get up and running:
+Two modes, selectable in the settings dialog:
 
-* [Getting started](https://github.com/obsproject/obs-plugintemplate/wiki/Getting-Started)
-* [Build system requirements](https://github.com/obsproject/obs-plugintemplate/wiki/Build-System-Requirements)
-* [Build system options](https://github.com/obsproject/obs-plugintemplate/wiki/CMake-Build-System-Options)
+- **StreamKit (default, no setup):** authorizes through Discord's own StreamKit
+  application. First connect pops an authorization prompt inside Discord —
+  click *Authorize* once. Unofficial but stable for years (used by StreamKit
+  overlays and Discord Reactive Images).
+- **Own Discord application:** create an application at
+  https://discord.com/developers/applications, paste its *Client ID* and
+  *Client Secret* into the plugin settings. Fully within Discord's rules;
+  works even if the StreamKit endpoint ever goes away. Uses the local IPC
+  pipe transport.
 
-## GitHub Actions & CI
+The OAuth token is cached in
+`%APPDATA%\obs-studio\plugin_config\obs-discordstatus\config.json` so the
+prompt appears only once.
 
-Default GitHub Actions workflows are available for the following repository actions:
+## Building
 
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
-
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
-
-### Retrieving build artifacts
-
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
-
-### Building a Release
-
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
-
-## Signing and Notarizing on macOS
-
-Basic concepts of codesigning and notarization on macOS are explained in the correspodning [Wiki article](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS) which has a specific section for the [GitHub Actions setup](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS#setting-up-code-signing-for-github-actions).
+- CI / release builds: standard [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate)
+  presets (`cmake --preset windows-x64`, VS 2022).
+- Local dev build (Ninja + vcvars): `pwsh scripts/build.ps1 [-Deploy] [-Package]`.
+  See `CMakeUserPresets.json` — needed when only VS 2026 Build Tools with the
+  14.44 toolset are available.

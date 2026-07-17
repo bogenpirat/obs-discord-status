@@ -1,10 +1,12 @@
 #include "rpc-client.h"
+#include "transport.h"
 
 #include <obs-module.h>
 #include <plugin-support.h>
 
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QUrl>
 #include <QUuid>
 
 #define NOMINMAX
@@ -22,13 +24,48 @@ namespace {
 // run this plugin without registering a Discord application; the code->token
 // exchange happens against StreamKit's backend, which holds the app secret.
 const char *kStreamKitClientId = "207646673902501888";
-const wchar_t *kWsPath = L"/?v=1&client_id=207646673902501888&encoding=json";
-// Origin must match one of StreamKit's registered rpc_origins.
-const wchar_t *kOriginHeader = L"Origin: https://streamkit.discord.com";
 
 QByteArray toBytes(const QJsonObject &obj)
 {
 	return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+
+// Blocking HTTPS POST; returns the response body (empty on failure).
+QByteArray httpsPost(const wchar_t *host, const wchar_t *path, const wchar_t *contentType, const QByteArray &body)
+{
+	QByteArray response;
+	HINTERNET session = WinHttpOpen(L"obs-discordstatus", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+					WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (!session)
+		return response;
+	HINTERNET connection = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+	HINTERNET request = connection ? WinHttpOpenRequest(connection, L"POST", path, nullptr, WINHTTP_NO_REFERER,
+							    WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
+				       : nullptr;
+	std::wstring header = std::wstring(L"Content-Type: ") + contentType + L"\r\n";
+	if (request &&
+	    WinHttpSendRequest(request, header.c_str(), (DWORD)-1, (PVOID)body.data(), (DWORD)body.size(),
+			       (DWORD)body.size(), 0) &&
+	    WinHttpReceiveResponse(request, nullptr)) {
+		DWORD available = 0;
+		while (WinHttpQueryDataAvailable(request, &available) && available > 0) {
+			std::vector<char> buf(available);
+			DWORD read = 0;
+			if (!WinHttpReadData(request, buf.data(), available, &read) || read == 0)
+				break;
+			response.append(buf.data(), read);
+		}
+	} else {
+		obs_log(LOG_WARNING, "HTTPS POST to %ls failed (%lu)", host, GetLastError());
+	}
+
+	if (request)
+		WinHttpCloseHandle(request);
+	if (connection)
+		WinHttpCloseHandle(connection);
+	if (session)
+		WinHttpCloseHandle(session);
+	return response;
 }
 
 } // namespace
@@ -51,9 +88,22 @@ void DiscordRpcClient::start()
 void DiscordRpcClient::stop()
 {
 	m_stop = true;
-	closeSocket();
+	closeTransport();
 	if (m_thread.joinable())
 		m_thread.join();
+}
+
+void DiscordRpcClient::restart()
+{
+	stop();
+	start();
+}
+
+void DiscordRpcClient::setAuthMode(DiscordAuthMode mode, const QString &clientId, const QString &clientSecret)
+{
+	m_authMode = mode;
+	m_ownClientId = clientId;
+	m_ownClientSecret = clientSecret;
 }
 
 void DiscordRpcClient::setAccessToken(const QString &token)
@@ -66,6 +116,11 @@ QString DiscordRpcClient::accessToken() const
 {
 	std::lock_guard<std::mutex> lock(m_tokenMutex);
 	return m_accessToken;
+}
+
+QString DiscordRpcClient::effectiveClientId() const
+{
+	return m_authMode == DiscordAuthMode::StreamKit ? QString::fromLatin1(kStreamKitClientId) : m_ownClientId;
 }
 
 void DiscordRpcClient::sendCommand(const QString &cmd, const QJsonObject &args, const QString &nonce)
@@ -102,7 +157,15 @@ void DiscordRpcClient::runLoop()
 	int backoffSeconds = 2;
 	while (!m_stop) {
 		emit statusChanged(QStringLiteral("Connecting to Discord..."));
-		if (!connectAnyPort()) {
+
+		if (m_authMode == DiscordAuthMode::OwnApp && (m_ownClientId.isEmpty() || m_ownClientSecret.isEmpty())) {
+			emit statusChanged(QStringLiteral("Own-app mode: set client ID and secret in settings"));
+			for (int i = 0; i < 50 && !m_stop; i++)
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			continue;
+		}
+
+		if (!openTransport()) {
 			emit statusChanged(QStringLiteral("Discord not running"));
 			for (int i = 0; i < backoffSeconds * 10 && !m_stop; i++)
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -116,127 +179,58 @@ void DiscordRpcClient::runLoop()
 			m_ready = false;
 			emit disconnected();
 		}
-		closeSocket();
+		closeTransport();
 	}
 }
 
-bool DiscordRpcClient::connectAnyPort()
+bool DiscordRpcClient::openTransport()
 {
 	std::lock_guard<std::mutex> lock(m_sendMutex);
+	if (m_authMode == DiscordAuthMode::StreamKit)
+		m_transport = std::make_unique<WebSocketTransport>();
+	else
+		m_transport = std::make_unique<PipeTransport>();
 
-	HINTERNET session = WinHttpOpen(L"obs-discordstatus", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
-					WINHTTP_NO_PROXY_BYPASS, 0);
-	if (!session)
+	if (!m_transport->open(effectiveClientId())) {
+		m_transport.reset();
 		return false;
-
-	for (INTERNET_PORT port = 6463; port <= 6472 && !m_stop; port++) {
-		HINTERNET connection = WinHttpConnect(session, L"127.0.0.1", port, 0);
-		if (!connection)
-			continue;
-
-		HINTERNET request = WinHttpOpenRequest(connection, L"GET", kWsPath, nullptr, WINHTTP_NO_REFERER,
-						       WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-		if (!request) {
-			WinHttpCloseHandle(connection);
-			continue;
-		}
-
-		WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0);
-		WinHttpAddRequestHeaders(request, kOriginHeader, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
-
-		// Short timeouts: this is a loopback connection.
-		WinHttpSetTimeouts(request, 2000, 2000, 5000, 5000);
-
-		if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&
-		    WinHttpReceiveResponse(request, nullptr)) {
-			DWORD status = 0;
-			DWORD size = sizeof(status);
-			WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-					    WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
-			if (status == 101) {
-				HINTERNET ws = WinHttpWebSocketCompleteUpgrade(request, 0);
-				WinHttpCloseHandle(request);
-				if (ws) {
-					m_session = session;
-					m_connection = connection;
-					m_ws = ws;
-					obs_log(LOG_INFO, "connected to Discord RPC on port %d", (int)port);
-					return true;
-				}
-				WinHttpCloseHandle(connection);
-				continue;
-			}
-			obs_log(LOG_WARNING, "Discord RPC port %d rejected upgrade (HTTP %lu)", (int)port, status);
-		}
-		WinHttpCloseHandle(request);
-		WinHttpCloseHandle(connection);
 	}
-
-	WinHttpCloseHandle(session);
-	return false;
+	return true;
 }
 
-void DiscordRpcClient::closeSocket()
+void DiscordRpcClient::closeTransport()
 {
 	std::lock_guard<std::mutex> lock(m_sendMutex);
-	if (m_ws) {
-		WinHttpWebSocketClose((HINTERNET)m_ws, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
-		WinHttpCloseHandle((HINTERNET)m_ws);
-		m_ws = nullptr;
-	}
-	if (m_connection) {
-		WinHttpCloseHandle((HINTERNET)m_connection);
-		m_connection = nullptr;
-	}
-	if (m_session) {
-		WinHttpCloseHandle((HINTERNET)m_session);
-		m_session = nullptr;
+	if (m_transport) {
+		m_transport->close();
+		m_transport.reset();
 	}
 }
 
 bool DiscordRpcClient::sendJson(const QJsonObject &msg)
 {
 	std::lock_guard<std::mutex> lock(m_sendMutex);
-	if (!m_ws)
+	if (!m_transport)
 		return false;
-	QByteArray payload = toBytes(msg);
-	DWORD rc = WinHttpWebSocketSend((HINTERNET)m_ws, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
-					(PVOID)payload.data(), (DWORD)payload.size());
-	if (rc != NO_ERROR) {
-		obs_log(LOG_WARNING, "WebSocket send failed (%lu)", rc);
-		return false;
-	}
-	return true;
+	return m_transport->sendText(toBytes(msg));
 }
 
 QJsonObject DiscordRpcClient::readMessage()
 {
-	HINTERNET ws;
+	DiscordTransport *transport;
 	{
 		std::lock_guard<std::mutex> lock(m_sendMutex);
-		ws = (HINTERNET)m_ws;
+		transport = m_transport.get();
 	}
-	if (!ws)
+	if (!transport)
 		return {};
 
-	std::string buffer;
-	std::vector<char> chunk(16384);
-	for (;;) {
-		DWORD read = 0;
-		WINHTTP_WEB_SOCKET_BUFFER_TYPE type;
-		DWORD rc = WinHttpWebSocketReceive(ws, chunk.data(), (DWORD)chunk.size(), &read, &type);
-		if (rc != NO_ERROR)
-			return {};
-		if (type == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE)
-			return {};
-		buffer.append(chunk.data(), read);
-		if (type == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE ||
-		    type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE)
-			break;
-	}
+	QByteArray raw = transport->readMessage();
+	if (raw.isEmpty())
+		return {};
 
 	QJsonParseError err;
-	QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(buffer), &err);
+	QJsonDocument doc = QJsonDocument::fromJson(raw, &err);
 	if (err.error != QJsonParseError::NoError) {
 		obs_log(LOG_WARNING, "failed to parse RPC message: %s", err.errorString().toUtf8().constData());
 		return {};
@@ -246,7 +240,7 @@ QJsonObject DiscordRpcClient::readMessage()
 
 bool DiscordRpcClient::performHandshake()
 {
-	// First message after the socket opens is DISPATCH READY.
+	// First message after the transport opens is DISPATCH READY.
 	QJsonObject ready = readMessage();
 	if (ready.value("evt").toString() != QStringLiteral("READY")) {
 		obs_log(LOG_WARNING, "expected READY, got: %s",
@@ -308,9 +302,13 @@ bool DiscordRpcClient::authenticate(const QString &token, QJsonObject &responseD
 QString DiscordRpcClient::authorizeAndExchangeCode()
 {
 	QJsonObject args;
-	args["client_id"] = QString::fromLatin1(kStreamKitClientId);
-	args["scopes"] = QJsonArray{"rpc", "messages.read"};
-	args["prompt"] = QStringLiteral("none");
+	args["client_id"] = effectiveClientId();
+	if (m_authMode == DiscordAuthMode::StreamKit) {
+		args["scopes"] = QJsonArray{"rpc", "messages.read"};
+		args["prompt"] = QStringLiteral("none");
+	} else {
+		args["scopes"] = QJsonArray{"rpc"};
+	}
 	sendCommand(QStringLiteral("AUTHORIZE"), args, QStringLiteral("authorize"));
 
 	// The response arrives only after the user clicks through Discord's
@@ -324,47 +322,28 @@ QString DiscordRpcClient::authorizeAndExchangeCode()
 	QString code = reply.value("data").toObject().value("code").toString();
 	if (code.isEmpty())
 		return {};
+	return exchangeCode(code);
+}
 
-	// Exchange the OAuth code at StreamKit's backend (it owns the secret).
-	QByteArray body = toBytes(QJsonObject{{"code", code}});
-	QString token;
-
-	HINTERNET session = WinHttpOpen(L"obs-discordstatus", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-					WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-	if (!session)
-		return {};
-	HINTERNET connection = WinHttpConnect(session, L"streamkit.discord.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-	HINTERNET request = connection ? WinHttpOpenRequest(connection, L"POST", L"/overlay/token", nullptr,
-							    WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-							    WINHTTP_FLAG_SECURE)
-				       : nullptr;
-	if (request &&
-	    WinHttpSendRequest(request, L"Content-Type: application/json\r\n", (DWORD)-1, (PVOID)body.data(),
-			       (DWORD)body.size(), (DWORD)body.size(), 0) &&
-	    WinHttpReceiveResponse(request, nullptr)) {
-		std::string response;
-		DWORD available = 0;
-		while (WinHttpQueryDataAvailable(request, &available) && available > 0) {
-			std::vector<char> buf(available);
-			DWORD read = 0;
-			if (!WinHttpReadData(request, buf.data(), available, &read) || read == 0)
-				break;
-			response.append(buf.data(), read);
-		}
-		QJsonObject obj = QJsonDocument::fromJson(QByteArray::fromStdString(response)).object();
-		token = obj.value("access_token").toString();
-		if (token.isEmpty())
-			obs_log(LOG_WARNING, "StreamKit token exchange failed: %s", response.c_str());
+QString DiscordRpcClient::exchangeCode(const QString &code)
+{
+	QByteArray response;
+	if (m_authMode == DiscordAuthMode::StreamKit) {
+		// StreamKit's backend holds the app secret and exchanges for us.
+		response = httpsPost(L"streamkit.discord.com", L"/overlay/token", L"application/json",
+				     toBytes(QJsonObject{{"code", code}}));
 	} else {
-		obs_log(LOG_WARNING, "StreamKit token exchange request failed (%lu)", GetLastError());
+		QByteArray body = "grant_type=authorization_code";
+		body += "&client_id=" + QUrl::toPercentEncoding(m_ownClientId);
+		body += "&client_secret=" + QUrl::toPercentEncoding(m_ownClientSecret);
+		body += "&code=" + QUrl::toPercentEncoding(code);
+		response = httpsPost(L"discord.com", L"/api/oauth2/token", L"application/x-www-form-urlencoded",
+				     body);
 	}
 
-	if (request)
-		WinHttpCloseHandle(request);
-	if (connection)
-		WinHttpCloseHandle(connection);
-	if (session)
-		WinHttpCloseHandle(session);
+	QString token = QJsonDocument::fromJson(response).object().value("access_token").toString();
+	if (token.isEmpty())
+		obs_log(LOG_WARNING, "OAuth code exchange failed: %s", response.constData());
 	return token;
 }
 
@@ -373,7 +352,7 @@ void DiscordRpcClient::receiveLoop()
 	while (!m_stop) {
 		QJsonObject msg = readMessage();
 		if (msg.isEmpty())
-			return; // socket closed or parse failure
+			return; // transport closed or parse failure
 
 		QString cmd = msg.value("cmd").toString();
 		QString evt = msg.value("evt").toString();

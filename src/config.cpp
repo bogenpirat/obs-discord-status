@@ -31,6 +31,9 @@ PluginConfig PluginConfig::load()
 
 	QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
 	config.accessToken = root.value("access_token").toString();
+	config.authMode = root.value("auth_mode").toString(QStringLiteral("streamkit"));
+	config.clientId = root.value("client_id").toString();
+	config.clientSecret = root.value("client_secret").toString();
 	for (const QJsonValue &v : root.value("rules").toArray())
 		config.rules.append(Rule::fromJson(v.toObject()));
 
@@ -46,6 +49,9 @@ void PluginConfig::save() const
 
 	QJsonObject root;
 	root["access_token"] = accessToken;
+	root["auth_mode"] = authMode.isEmpty() ? QStringLiteral("streamkit") : authMode;
+	root["client_id"] = clientId;
+	root["client_secret"] = clientSecret;
 	QJsonArray ruleArray;
 	for (const Rule &rule : rules)
 		ruleArray.append(rule.toJson());

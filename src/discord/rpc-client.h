@@ -5,16 +5,24 @@
 #include <QString>
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <thread>
 
-// Client for the local Discord RPC server (WebSocket transport on
-// 127.0.0.1:6463-6472). Authenticates via the StreamKit application so users
-// don't have to register their own Discord app; an own-app mode can reuse the
-// same protocol over IPC later.
-//
-// All signals are emitted from a worker thread — connect with queued
-// connections (Qt's default AutoConnection does this for cross-thread).
+class DiscordTransport;
+
+enum class DiscordAuthMode {
+	// Authorize as Discord's own StreamKit app over the local WebSocket.
+	// Zero setup for the user; unofficial but long-stable.
+	StreamKit,
+	// Authorize as a user-created Discord application over the IPC pipe.
+	// Requires client ID + secret, fully within Discord's rules.
+	OwnApp,
+};
+
+// Client for the local Discord RPC server. All signals are emitted from a
+// worker thread — connect with queued connections (Qt's AutoConnection default
+// handles this for cross-thread receivers).
 class DiscordRpcClient : public QObject {
 	Q_OBJECT
 
@@ -24,6 +32,13 @@ public:
 
 	void start();
 	void stop();
+	void restart();
+
+	// Configure before start()/restart(). For OwnApp, id/secret come from
+	// the user's Discord application.
+	void setAuthMode(DiscordAuthMode mode, const QString &clientId = QString(),
+			 const QString &clientSecret = QString());
+	DiscordAuthMode authMode() const { return m_authMode; }
 
 	// Cached OAuth token (persisted by the config layer between sessions).
 	void setAccessToken(const QString &token);
@@ -49,15 +64,17 @@ signals:
 
 private:
 	void runLoop();
-	bool connectAnyPort();
+	bool openTransport();
 	bool performHandshake(); // READY + authenticate; false = close and retry
 	bool authenticate(const QString &token, QJsonObject &responseData);
 	QString authorizeAndExchangeCode();
+	QString exchangeCode(const QString &code);
 	void receiveLoop();
-	void closeSocket();
+	void closeTransport();
 
+	QString effectiveClientId() const;
 	bool sendJson(const QJsonObject &msg);
-	// Blocking read of one complete text message; empty on socket error.
+	// Blocking read of one complete message; empty on socket error.
 	QJsonObject readMessage();
 
 	std::thread m_thread;
@@ -67,8 +84,10 @@ private:
 	mutable std::mutex m_tokenMutex;
 	QString m_accessToken;
 
-	std::mutex m_sendMutex; // guards m_ws sends and handle teardown
-	void *m_session = nullptr;
-	void *m_connection = nullptr;
-	void *m_ws = nullptr;
+	DiscordAuthMode m_authMode = DiscordAuthMode::StreamKit;
+	QString m_ownClientId;
+	QString m_ownClientSecret;
+
+	std::mutex m_sendMutex; // guards transport sends and teardown
+	std::unique_ptr<DiscordTransport> m_transport;
 };

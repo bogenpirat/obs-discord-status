@@ -8,6 +8,10 @@
 // Plugin configuration persisted as JSON in the module config directory.
 struct PluginConfig {
 	QString accessToken;
+	// "streamkit" (default) or "ownapp"; see DiscordAuthMode.
+	QString authMode;
+	QString clientId;
+	QString clientSecret;
 	QList<Rule> rules;
 
 	static PluginConfig load();

@@ -62,6 +62,9 @@ bool obs_module_load(void)
 	auto *mainWindow = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 	client = new DiscordRpcClient(mainWindow ? static_cast<QObject *>(mainWindow) : nullptr);
 	client->setAccessToken(config->accessToken);
+	client->setAuthMode(config->authMode == QStringLiteral("ownapp") ? DiscordAuthMode::OwnApp
+									 : DiscordAuthMode::StreamKit,
+			    config->clientId, config->clientSecret);
 	QObject::connect(client, &DiscordRpcClient::accessTokenChanged, client, [](const QString &token) {
 		config->accessToken = token;
 		config->save();
