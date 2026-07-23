@@ -285,8 +285,8 @@ SettingsDialog::SettingsDialog(DiscordRpcClient *client, RulesEngine *engine, Pl
 		m_config->accessToken.clear();
 		m_config->save();
 		m_client->setAccessToken(QString());
-		m_client->setAuthMode(own ? DiscordAuthMode::OwnApp : DiscordAuthMode::StreamKit,
-				      m_config->clientId, m_config->clientSecret);
+		m_client->setAuthMode(own ? DiscordAuthMode::OwnApp : DiscordAuthMode::StreamKit, m_config->clientId,
+				      m_config->clientSecret);
 		m_client->restart();
 	});
 
@@ -323,10 +323,10 @@ void SettingsDialog::refreshRuleList()
 {
 	m_ruleList->clear();
 	for (const Rule &rule : m_config->rules) {
-		QString label = QStringLiteral("%1%2  [%3, %4 action(s)]")
-					.arg(rule.enabled ? "" : "(disabled) ", rule.name,
-					     triggerDisplayName(rule.trigger))
-					.arg(rule.actions.size());
+		QString label =
+			QStringLiteral("%1%2  [%3, %4 action(s)]")
+				.arg(rule.enabled ? "" : "(disabled) ", rule.name, triggerDisplayName(rule.trigger))
+				.arg(rule.actions.size());
 		m_ruleList->addItem(label);
 	}
 }

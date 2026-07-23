@@ -7,7 +7,8 @@
 
 RulesEngine::RulesEngine(VoiceStateModel *model, QObject *parent) : QObject(parent)
 {
-	connect(model, &VoiceStateModel::joinedVoice, this, [this](const QString &) { fire(TriggerType::JoinedVoice); });
+	connect(model, &VoiceStateModel::joinedVoice, this,
+		[this](const QString &) { fire(TriggerType::JoinedVoice); });
 	connect(model, &VoiceStateModel::leftVoice, this, [this] { fire(TriggerType::LeftVoice); });
 	connect(model, &VoiceStateModel::selfMuteChanged, this,
 		[this](bool muted) { fire(muted ? TriggerType::SelfMuted : TriggerType::SelfUnmuted); });
@@ -38,8 +39,7 @@ void RulesEngine::fire(TriggerType trigger, const VoiceParticipant *user)
 				continue;
 		}
 
-		obs_log(LOG_INFO, "rule '%s' fired (%s)", rule.name.toUtf8().constData(),
-			triggerDisplayName(trigger));
+		obs_log(LOG_INFO, "rule '%s' fired (%s)", rule.name.toUtf8().constData(), triggerDisplayName(trigger));
 		executeActions(rule.actions);
 	}
 }

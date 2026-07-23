@@ -26,8 +26,7 @@ void setSceneItemVisible(const QString &sceneName, const QString &sourceName, bo
 	if (!sceneName.isEmpty()) {
 		obs_source_t *sceneSource = obs_get_source_by_name(sceneName.toUtf8().constData());
 		if (!sceneSource) {
-			obs_log(LOG_WARNING, "action skipped: scene '%s' not found",
-				sceneName.toUtf8().constData());
+			obs_log(LOG_WARNING, "action skipped: scene '%s' not found", sceneName.toUtf8().constData());
 			return;
 		}
 		setSceneItemVisibleInScene(sceneSource, sourceUtf8.constData(), visible, &found);
@@ -49,8 +48,7 @@ void setSourceMuted(const QString &sourceName, bool muted)
 {
 	obs_source_t *source = obs_get_source_by_name(sourceName.toUtf8().constData());
 	if (!source) {
-		obs_log(LOG_WARNING, "action skipped: audio source '%s' not found",
-			sourceName.toUtf8().constData());
+		obs_log(LOG_WARNING, "action skipped: audio source '%s' not found", sourceName.toUtf8().constData());
 		return;
 	}
 	obs_source_set_muted(source, muted);
@@ -61,8 +59,7 @@ void setSourceVolume(const QString &sourceName, double percent)
 {
 	obs_source_t *source = obs_get_source_by_name(sourceName.toUtf8().constData());
 	if (!source) {
-		obs_log(LOG_WARNING, "action skipped: audio source '%s' not found",
-			sourceName.toUtf8().constData());
+		obs_log(LOG_WARNING, "action skipped: audio source '%s' not found", sourceName.toUtf8().constData());
 		return;
 	}
 	obs_source_set_volume(source, (float)(percent / 100.0));

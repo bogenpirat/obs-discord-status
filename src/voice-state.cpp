@@ -111,8 +111,8 @@ void VoiceStateModel::switchChannel(const QString &channelId)
 
 	QJsonObject oldArgs{{"channel_id", m_channelId}};
 	if (!m_channelId.isEmpty()) {
-		for (const char *evt :
-		     {"VOICE_STATE_CREATE", "VOICE_STATE_UPDATE", "VOICE_STATE_DELETE", "SPEAKING_START", "SPEAKING_STOP"})
+		for (const char *evt : {"VOICE_STATE_CREATE", "VOICE_STATE_UPDATE", "VOICE_STATE_DELETE",
+					"SPEAKING_START", "SPEAKING_STOP"})
 			m_client->unsubscribe(QString::fromLatin1(evt), oldArgs);
 		resetChannelState();
 		emit leftVoice();
@@ -142,8 +142,8 @@ void VoiceStateModel::seedChannel(const QJsonObject &channel)
 		addVoiceState(v.toObject(), false);
 
 	if (firstSeed) {
-		obs_log(LOG_INFO, "joined voice channel '%s' (%d other member(s))",
-			m_channelName.toUtf8().constData(), (int)others().size());
+		obs_log(LOG_INFO, "joined voice channel '%s' (%d other member(s))", m_channelName.toUtf8().constData(),
+			(int)others().size());
 		emit joinedVoice(m_channelName);
 	}
 }

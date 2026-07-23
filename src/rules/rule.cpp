@@ -5,9 +5,9 @@
 namespace {
 
 const char *kTriggerKeys[] = {
-	"joined_voice",       "left_voice",        "self_muted",       "self_unmuted",
-	"self_deafened",      "self_undeafened",   "participant_joined", "participant_left",
-	"speaking_started",   "speaking_stopped",  "any_speaking_started", "any_speaking_stopped",
+	"joined_voice",     "left_voice",       "self_muted",           "self_unmuted",
+	"self_deafened",    "self_undeafened",  "participant_joined",   "participant_left",
+	"speaking_started", "speaking_stopped", "any_speaking_started", "any_speaking_stopped",
 };
 
 const char *kActionKeys[] = {

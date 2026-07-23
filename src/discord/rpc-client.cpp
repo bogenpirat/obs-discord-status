@@ -243,8 +243,7 @@ bool DiscordRpcClient::performHandshake()
 	// First message after the transport opens is DISPATCH READY.
 	QJsonObject ready = readMessage();
 	if (ready.value("evt").toString() != QStringLiteral("READY")) {
-		obs_log(LOG_WARNING, "expected READY, got: %s",
-			QString::fromUtf8(toBytes(ready)).toUtf8().constData());
+		obs_log(LOG_WARNING, "expected READY, got: %s", QString::fromUtf8(toBytes(ready)).toUtf8().constData());
 		return false;
 	}
 
@@ -337,8 +336,7 @@ QString DiscordRpcClient::exchangeCode(const QString &code)
 		body += "&client_id=" + QUrl::toPercentEncoding(m_ownClientId);
 		body += "&client_secret=" + QUrl::toPercentEncoding(m_ownClientSecret);
 		body += "&code=" + QUrl::toPercentEncoding(code);
-		response = httpsPost(L"discord.com", L"/api/oauth2/token", L"application/x-www-form-urlencoded",
-				     body);
+		response = httpsPost(L"discord.com", L"/api/oauth2/token", L"application/x-www-form-urlencoded", body);
 	}
 
 	QString token = QJsonDocument::fromJson(response).object().value("access_token").toString();
