@@ -194,7 +194,13 @@ void VoiceStateModel::setSelfVoiceSettings(bool mute, bool deaf)
 	if (first) {
 		m_selfMute = mute;
 		m_selfDeaf = deaf;
-		return; // initial seed, not an edge
+		// Apply rules for the state that Discord reports on connection, so OBS
+		// starts synchronized rather than waiting for the next state change.
+		obs_log(LOG_INFO, "initial self state: %s, %s", mute ? "muted" : "unmuted",
+			deaf ? "deafened" : "undeafened");
+		emit selfMuteChanged(mute);
+		emit selfDeafChanged(deaf);
+		return;
 	}
 	if (mute != m_selfMute) {
 		m_selfMute = mute;
